@@ -33,6 +33,12 @@ const isAdmin = (req, res, next) => {
 
   next();
 };
+app.get("/", (req, res) => {
+  res.json({
+    status: "running",
+    message: "🚀 album API is working fine"
+  });
+});
 
 // 🚀 FAST Catbox Upload (DIRECT API)
 const uploadToCatbox = async (fileUrl) => {
