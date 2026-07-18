@@ -43,25 +43,12 @@ app.get("/", (req, res) => {
 // 🚀 FAST Catbox Upload (DIRECT API)
 const uploadToCatbox = async (fileUrl) => {
   try {
-    const fileRes = await axios.get(fileUrl, {
-      responseType: "stream"
-    });
-
-    const form = new FormData();
-    form.append("reqtype", "fileupload");
-    form.append("fileToUpload", fileRes.data);
-
-    const res = await axios.post(
-      "https://catbox.moe/user/api.php",
-      form,
-      {
-        headers: form.getHeaders(),
-        maxBodyLength: Infinity
-      }
+    const res = await axios.get(
+      `https://mahmud-rest-api-v222.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`
     );
 
-    if (typeof res.data === "string") {
-      return res.data.trim();
+    if (res.data.status) {
+      return res.data.link.trim();
     }
 
     return null;
@@ -70,7 +57,6 @@ const uploadToCatbox = async (fileUrl) => {
     return null;
   }
 };
-
 // Add video
 app.get("/api/album/add/:category", async (req, res) => {
   const category = req.params.category.toLowerCase();
