@@ -44,7 +44,7 @@ app.get("/", (req, res) => {
 const uploadToCatbox = async (fileUrl) => {
   try {
     const res = await axios.get(
-      `https://mahmud-rest-api-v222.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`
+      `https://mahmud-apis-999.onrender.com//api/catbox?url=${encodeURIComponent(fileUrl)}`
     );
 
     if (res.data.status) {
