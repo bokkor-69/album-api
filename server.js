@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
+const FormData = require("form-data"); // 👈 Added for Direct Catbox Upload
 
 dotenv.config();
 const app = express();
@@ -46,19 +47,51 @@ const isAdmin = (req, res, next) => {
   return res.status(403).json({ error: "❌ Admin authorization required", author: "Bokkor" });
 };
 
-// 🚀 Fast Catbox Re-upload Check
+// 🚀 Reliable Direct Catbox Re-upload Engine
 const processVideoUrl = async (fileUrl) => {
   if (fileUrl.includes("catbox.moe")) return fileUrl;
+
+  // Attempt 1: Direct Stream to Official Catbox API
+  try {
+    const stream = await axios({
+      method: "get",
+      url: fileUrl,
+      responseType: "stream",
+      headers: { 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" 
+      },
+      timeout: 15000
+    });
+
+    const formData = new FormData();
+    formData.append("reqtype", "fileupload");
+    formData.append("fileToUpload", stream.data, "video.mp4");
+
+    const catboxRes = await axios.post("https://catbox.moe/user/api.php", formData, {
+      headers: formData.getHeaders(),
+      timeout: 30000
+    });
+
+    if (catboxRes.data && typeof catboxRes.data === "string" && catboxRes.data.startsWith("http")) {
+      console.log("✅ Successfully converted to Catbox:", catboxRes.data.trim());
+      return catboxRes.data.trim();
+    }
+  } catch (err) {
+    console.warn("⚠️ Direct Catbox upload failed, trying fallback API...", err.message);
+  }
+
+  // Attempt 2: Fallback to External Catbox API
   try {
     const res = await axios.get(
       `https://mahmud-apis-999.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`,
-      { timeout: 8000 }
+      { timeout: 10000 }
     );
     if (res.data?.status && res.data?.link) return res.data.link.trim();
   } catch (err) {
-    console.warn("⚠️ Catbox fallback bypassed:", err.message);
+    console.warn("⚠️ External Catbox API failed:", err.message);
   }
-  return fileUrl;
+
+  return fileUrl; // Last resort if all methods fail
 };
 
 // ==========================================
@@ -213,9 +246,12 @@ app.post("/api/album/bulk-add/:category", isAdmin, async (req, res) => {
       return res.status(400).json({ error: "❌ 'urls' must be a non-empty array" });
     }
 
+    // Process all URLs in parallel through processVideoUrl
+    const processedUrls = await Promise.all(urls.map(url => processVideoUrl(url)));
+
     const album = await Album.findOneAndUpdate(
       { category },
-      { $addToSet: { videos: { $each: urls } } },
+      { $addToSet: { videos: { $each: processedUrls } } },
       { upsert: true, new: true }
     );
 
