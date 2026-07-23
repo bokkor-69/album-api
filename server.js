@@ -140,6 +140,27 @@ app.get("/api/album/stats", async (req, res) => {
   }
 });
 
+// 🗑️ Delete Entire Category (Admin Only)
+app.get("/api/album/delete-category/:category", isAdmin, async (req, res) => {
+  try {
+    const category = req.params.category.toLowerCase().trim();
+    const deletedAlbum = await Album.findOneAndDelete({ category });
+
+    if (!deletedAlbum) {
+      return res.status(404).json({ error: `Category '${category}' not found!` });
+    }
+
+    res.json({
+      message: `Category '${category}' and all videos deleted successfully.`,
+      author: "Bokkor"
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Deletion failed", details: err.message });
+  }
+});
+
+
+
 // 📁 2. List Categories (With Video Counts)
 app.get("/api/album/list", async (req, res) => {
   try {
