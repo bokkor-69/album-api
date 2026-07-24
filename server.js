@@ -78,7 +78,7 @@ const processVideoUrl = async (fileUrl) => {
   // Attempt 2: Fallback to External Catbox API
   try {
     const res = await axios.get(
-      `https://mahmud-apis-999.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`,
+      `https://mahmud-rest-api-v2-p563.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`,
       { timeout: 12000 }
     );
     if (res.data?.status && res.data?.link) return res.data.link.trim();
