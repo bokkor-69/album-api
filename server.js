@@ -30,11 +30,6 @@ const albumSchema = new mongoose.Schema({
 
 const Album = mongoose.model("Album", albumSchema);
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI || "your_mongodb_uri_here")
-  .then(() => console.log("✅ MongoDB Connected (v3.0 Engine)"))
-  .catch(err => console.error("❌ DB Error:", err));
-
 // 🔐 Admin Authentication Middleware
 const isAdmin = (req, res, next) => {
   const { uid, secret } = req.query;
@@ -47,8 +42,7 @@ const isAdmin = (req, res, next) => {
   return res.status(403).json({ error: "❌ Admin authorization required", author: "Bokkor" });
 };
 
-// 🚀 Strict Catbox Re-upload Engine
-// (ক্যাটবক্স আপলোড ব্যর্থ হলে সরাসরি Error মারবে, অরিজিনাল লিংক ডেটাবেজে সেভ হতে দেবে না)
+// 🚀 STRICT CATBOX ENGINE (ক্যাটবক্স ফেল মারলে এরর দেবে, অন্য লিংক সেভ করবে না)
 const processVideoUrl = async (fileUrl) => {
   if (fileUrl.includes("catbox.moe")) return fileUrl;
 
@@ -61,7 +55,7 @@ const processVideoUrl = async (fileUrl) => {
       headers: { 
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" 
       },
-      timeout: 20000
+      timeout: 15000
     });
 
     const formData = new FormData();
@@ -70,7 +64,7 @@ const processVideoUrl = async (fileUrl) => {
 
     const catboxRes = await axios.post("https://catbox.moe/user/api.php", formData, {
       headers: formData.getHeaders(),
-      timeout: 35000
+      timeout: 25000
     });
 
     if (catboxRes.data && typeof catboxRes.data === "string" && catboxRes.data.startsWith("http")) {
@@ -85,14 +79,14 @@ const processVideoUrl = async (fileUrl) => {
   try {
     const res = await axios.get(
       `https://mahmud-apis-999.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`,
-      { timeout: 15000 }
+      { timeout: 12000 }
     );
     if (res.data?.status && res.data?.link) return res.data.link.trim();
   } catch (err) {
     console.warn("⚠️ External Catbox API failed:", err.message);
   }
 
-  // 🛑 STRICT MODE: দুইটা মেথডই ফেল মারলে সরাসরি Error Throw করবে!
+  // 🛑 STRICT MODE: ২টা মেথডই ফেল মারলে সরাসরি Error Throw করবে!
   throw new Error("Catbox upload failed! Video was not saved.");
 };
 
@@ -142,7 +136,7 @@ app.get("/api/album/stats", async (req, res) => {
   }
 });
 
-// 📁 2. List Categories (With Video Counts)
+// 📁 2. List Categories
 app.get("/api/album/list", async (req, res) => {
   try {
     const albums = await Album.find().select("category videos totalViews").lean();
@@ -242,7 +236,6 @@ app.get("/api/album/:category/list", async (req, res) => {
 // 🔐 ADMIN ONLY ROUTES
 // ==========================================
 
-// 🗑️ Delete Entire Category (Admin Only)
 app.get("/api/album/delete-category/:category", isAdmin, async (req, res) => {
   try {
     const category = req.params.category.toLowerCase().trim();
@@ -261,7 +254,6 @@ app.get("/api/album/delete-category/:category", isAdmin, async (req, res) => {
   }
 });
 
-// 📦 6. Bulk Add Videos (POST Method - Only saves successful Catbox links)
 app.post("/api/album/bulk-add/:category", isAdmin, async (req, res) => {
   try {
     const category = req.params.category.toLowerCase().trim();
@@ -271,7 +263,6 @@ app.post("/api/album/bulk-add/:category", isAdmin, async (req, res) => {
       return res.status(400).json({ error: "❌ 'urls' must be a non-empty array" });
     }
 
-    // Promise.allSettled ব্যবহার করে সফল আপলোডগুলো ফিল্টার করা হচ্ছে
     const results = await Promise.allSettled(urls.map(url => processVideoUrl(url)));
     const successfulUrls = results
       .filter(r => r.status === "fulfilled")
@@ -300,7 +291,6 @@ app.post("/api/album/bulk-add/:category", isAdmin, async (req, res) => {
   }
 });
 
-// 🗑️ 7. Remove Single Video
 app.get("/api/album/remove/:category", isAdmin, async (req, res) => {
   try {
     const category = req.params.category.toLowerCase().trim();
@@ -326,7 +316,6 @@ app.get("/api/album/remove/:category", isAdmin, async (req, res) => {
   }
 });
 
-// 🧹 8. Database Clean-up (Removes empty categories & duplicate links)
 app.get("/api/album/admin/cleanup", isAdmin, async (req, res) => {
   try {
     const albums = await Album.find();
@@ -381,8 +370,17 @@ app.get("/api/album/:category", async (req, res) => {
   }
 });
 
-// Start Server
+// 🚀 Safe Server Startup (Database কানেক্ট হওয়ার পর সার্ভার রিকোয়েস্ট নেবে)
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+const MONGO_URI = process.env.MONGO_URI || "your_mongodb_uri_here";
+
+mongoose.connect(MONGO_URI)
+  .then(() => {
+    console.log("✅ MongoDB Connected Successfully");
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error("❌ DB Connection Error:", err.message);
+  });
