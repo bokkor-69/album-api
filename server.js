@@ -4,7 +4,7 @@ const dotenv = require("dotenv");
 const axios = require("axios");
 const rateLimit = require("express-rate-limit");
 const cors = require("cors");
-const FormData = require("form-data"); // 👈 Added for Direct Catbox Upload
+const FormData = require("form-data");
 
 dotenv.config();
 const app = express();
@@ -47,7 +47,8 @@ const isAdmin = (req, res, next) => {
   return res.status(403).json({ error: "❌ Admin authorization required", author: "Bokkor" });
 };
 
-// 🚀 Reliable Direct Catbox Re-upload Engine
+// 🚀 Strict Catbox Re-upload Engine
+// (ক্যাটবক্স আপলোড ব্যর্থ হলে সরাসরি Error মারবে, অরিজিনাল লিংক ডেটাবেজে সেভ হতে দেবে না)
 const processVideoUrl = async (fileUrl) => {
   if (fileUrl.includes("catbox.moe")) return fileUrl;
 
@@ -60,7 +61,7 @@ const processVideoUrl = async (fileUrl) => {
       headers: { 
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" 
       },
-      timeout: 15000
+      timeout: 20000
     });
 
     const formData = new FormData();
@@ -69,7 +70,7 @@ const processVideoUrl = async (fileUrl) => {
 
     const catboxRes = await axios.post("https://catbox.moe/user/api.php", formData, {
       headers: formData.getHeaders(),
-      timeout: 30000
+      timeout: 35000
     });
 
     if (catboxRes.data && typeof catboxRes.data === "string" && catboxRes.data.startsWith("http")) {
@@ -84,14 +85,15 @@ const processVideoUrl = async (fileUrl) => {
   try {
     const res = await axios.get(
       `https://mahmud-apis-999.onrender.com/api/catbox?url=${encodeURIComponent(fileUrl)}`,
-      { timeout: 10000 }
+      { timeout: 15000 }
     );
     if (res.data?.status && res.data?.link) return res.data.link.trim();
   } catch (err) {
     console.warn("⚠️ External Catbox API failed:", err.message);
   }
 
-  return fileUrl; // Last resort if all methods fail
+  // 🛑 STRICT MODE: দুইটা মেথডই ফেল মারলে সরাসরি Error Throw করবে!
+  throw new Error("Catbox upload failed! Video was not saved.");
 };
 
 // ==========================================
@@ -140,27 +142,6 @@ app.get("/api/album/stats", async (req, res) => {
   }
 });
 
-// 🗑️ Delete Entire Category (Admin Only)
-app.get("/api/album/delete-category/:category", isAdmin, async (req, res) => {
-  try {
-    const category = req.params.category.toLowerCase().trim();
-    const deletedAlbum = await Album.findOneAndDelete({ category });
-
-    if (!deletedAlbum) {
-      return res.status(404).json({ error: `Category '${category}' not found!` });
-    }
-
-    res.json({
-      message: `Category '${category}' and all videos deleted successfully.`,
-      author: "Bokkor"
-    });
-  } catch (err) {
-    res.status(500).json({ error: "Deletion failed", details: err.message });
-  }
-});
-
-
-
 // 📁 2. List Categories (With Video Counts)
 app.get("/api/album/list", async (req, res) => {
   try {
@@ -200,7 +181,7 @@ app.get("/api/album/search", async (req, res) => {
   }
 });
 
-// ➕ 4. Add Single Video
+// ➕ 4. Add Single Video (Strict Mode)
 app.get("/api/album/add/:category", async (req, res) => {
   try {
     const category = req.params.category.toLowerCase().trim();
@@ -208,11 +189,12 @@ app.get("/api/album/add/:category", async (req, res) => {
 
     if (!url) return res.status(400).json({ error: "❌ 'url' parameter required" });
 
+    // Catbox এ কনভার্ট না হতে পারলে এটি সরাসরি Catch এ চলে যাবে
     const finalUrl = await processVideoUrl(url);
 
     const updatedAlbum = await Album.findOneAndUpdate(
       { category },
-      { $addToSet: { videos: finalUrl } }, // Prevents duplicates automatically
+      { $addToSet: { videos: finalUrl } },
       { upsert: true, new: true }
     );
 
@@ -223,7 +205,10 @@ app.get("/api/album/add/:category", async (req, res) => {
       author: "Bokkor"
     });
   } catch (err) {
-    res.status(500).json({ error: "❌ Add failed", details: err.message });
+    res.status(500).json({ 
+      error: "❌ Add failed", 
+      details: err.message || "Could not upload video to Catbox host." 
+    });
   }
 });
 
@@ -257,28 +242,57 @@ app.get("/api/album/:category/list", async (req, res) => {
 // 🔐 ADMIN ONLY ROUTES
 // ==========================================
 
-// 📦 6. Bulk Add Videos (POST Method)
+// 🗑️ Delete Entire Category (Admin Only)
+app.get("/api/album/delete-category/:category", isAdmin, async (req, res) => {
+  try {
+    const category = req.params.category.toLowerCase().trim();
+    const deletedAlbum = await Album.findOneAndDelete({ category });
+
+    if (!deletedAlbum) {
+      return res.status(404).json({ error: `Category '${category}' not found!` });
+    }
+
+    res.json({
+      message: `Category '${category}' and all videos deleted successfully.`,
+      author: "Bokkor"
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Deletion failed", details: err.message });
+  }
+});
+
+// 📦 6. Bulk Add Videos (POST Method - Only saves successful Catbox links)
 app.post("/api/album/bulk-add/:category", isAdmin, async (req, res) => {
   try {
     const category = req.params.category.toLowerCase().trim();
-    const { urls } = req.body; // Expecting JSON array: { "urls": ["url1", "url2"] }
+    const { urls } = req.body;
 
     if (!Array.isArray(urls) || !urls.length) {
       return res.status(400).json({ error: "❌ 'urls' must be a non-empty array" });
     }
 
-    // Process all URLs in parallel through processVideoUrl
-    const processedUrls = await Promise.all(urls.map(url => processVideoUrl(url)));
+    // Promise.allSettled ব্যবহার করে সফল আপলোডগুলো ফিল্টার করা হচ্ছে
+    const results = await Promise.allSettled(urls.map(url => processVideoUrl(url)));
+    const successfulUrls = results
+      .filter(r => r.status === "fulfilled")
+      .map(r => r.value);
+
+    if (successfulUrls.length === 0) {
+      return res.status(500).json({ 
+        error: "❌ Bulk add failed. None of the provided URLs could be converted to Catbox." 
+      });
+    }
 
     const album = await Album.findOneAndUpdate(
       { category },
-      { $addToSet: { videos: { $each: processedUrls } } },
+      { $addToSet: { videos: { $each: successfulUrls } } },
       { upsert: true, new: true }
     );
 
     res.json({
-      message: `✅ Bulk added ${urls.length} items to '${category}'`,
+      message: `✅ Bulk added ${successfulUrls.length}/${urls.length} items to '${category}'`,
       totalVideos: album.videos.length,
+      failedCount: urls.length - successfulUrls.length,
       author: "Bokkor"
     });
   } catch (err) {
@@ -323,7 +337,6 @@ app.get("/api/album/admin/cleanup", isAdmin, async (req, res) => {
         await Album.deleteOne({ _id: album._id });
         cleanedCategories++;
       } else {
-        // Remove duplicates
         album.videos = [...new Set(album.videos)];
         await album.save();
       }
@@ -345,7 +358,6 @@ app.get("/api/album/:category", async (req, res) => {
   try {
     const category = req.params.category.toLowerCase().trim();
 
-    // Fetch and increment totalViews atomically
     const album = await Album.findOneAndUpdate(
       { category, "videos.0": { $exists: true } },
       { $inc: { totalViews: 1 } },
